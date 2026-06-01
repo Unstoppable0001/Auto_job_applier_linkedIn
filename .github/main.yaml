@@ -1,0 +1,99 @@
+name: Run LinkedIn Auto Job Applier
+
+on:
+  schedule:
+    # Run every 6 hours (adjust as needed)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            chromium-browser \
+            chromium-chromedriver \
+            libnss3 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libgbm1 \
+            libasound2t64 \
+            libpango-1.0-0 \
+            libcairo2 \
+            libxss1 \
+            xvfb \
+            scrot
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install selenium pyautogui openai
+
+      - name: Configure secrets
+        env:
+          LI_USERNAME: ${{ secrets.LINKEDIN_USERNAME }}
+          LI_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Backup originals
+          cp config/secrets.py config/secrets.py.bak
+          
+          # Patch secrets.py with environment-based values
+          python -c "
+          import re
+          with open('config/secrets.py', 'r') as f:
+              content = f.read()
+          content = re.sub(r'^username\s*=.*', f'username = \"${{ secrets.LINKEDIN_USERNAME }}\"', content, flags=re.MULTILINE)
+          content = re.sub(r'^password\s*=.*', f'password = \"${{ secrets.LINKEDIN_PASSWORD }}\"', content, flags=re.MULTILINE)
+          with open('config/secrets.py', 'w') as f:
+              f.write(content)
+          "
+
+      - name: Run bot in headless mode
+        env:
+          DISPLAY: ':99'
+          PYTHONUNBUFFERED: '1'
+        run: |
+          # Start virtual display
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          
+          # Run with timeout to prevent runaway jobs
+          timeout 3600 python -m runAiBot
+        continue-on-error: true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-application-logs
+          path: |
+            logs/
+            *.csv
+          retention-days: 7
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots
+          path: |
+            logs/screenshots/
+          retention-days: 3
